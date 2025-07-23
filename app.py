@@ -18,8 +18,9 @@ def detect_angle():
     image.save(filepath)
 
     try:
+        # Run the Python script and capture output
         result = subprocess.check_output(
-            ['python', 'utils/angle_detector.py', filepath],
+            ['python3', 'utils/angle_detector.py', filepath],
             stderr=subprocess.STDOUT
         )
         angle = result.decode('utf-8').strip()
@@ -28,6 +29,6 @@ def detect_angle():
     except subprocess.CalledProcessError as e:
         return jsonify({'error': 'Failed to process image', 'details': e.output.decode()}), 500
 
+# For local development only — this line is ignored in production with gunicorn
 if __name__ == '__main__':
-    app.run(host="0.0.0.0", port=3000)
-
+    app.run(host='0.0.0.0', port=int(os.environ.get("PORT", 3000)))
