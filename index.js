@@ -1,77 +1,69 @@
 const express = require('express');
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
-const { spawn } = require('child_process');
 const cors = require('cors');
+const fs = require('fs');
+const { exec } = require('child_process');
+const path = require('path');
+const calculateAngleFromPoints = require('./utils/calculateAngleFromPoints');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 10000;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+app.use(express.static('uploads'));
 
-// File upload config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadPath = path.join(__dirname, 'uploads');
-    if (!fs.existsSync(uploadPath)) fs.mkdirSync(uploadPath);
-    cb(null, uploadPath);
-  },
-  filename: (req, file, cb) => {
-    cb(null, `image-${Date.now()}.jpg`);
-  },
+  destination: 'uploads/',
+  filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`)
 });
 const upload = multer({ storage });
 
-// 🟩 Detect angle from image
-app.post('/detect-angle', upload.single('image'), async (req, res) => {
-  const imagePath = req.file.path;
-  const points = req.body.points;
-
-  try {
-    const pythonProcess = spawn('python3', [
-      path.join(__dirname, 'utils', 'angle_detector.py'),
-      imagePath,
-      points ? JSON.stringify(JSON.parse(points)) : '',
-    ]);
-
-    let output = '';
-    let error = '';
-
-    pythonProcess.stdout.on('data', (data) => {
-      output += data.toString();
-    });
-
-    pythonProcess.stderr.on('data', (data) => {
-      error += data.toString();
-    });
-
-    pythonProcess.on('close', (code) => {
-      if (code !== 0 || error) {
-        console.error('Python error:', error);
-        return res.status(500).json({ error: 'Python script failed' });
-      }
-
-      try {
-        const result = JSON.parse(output);
-        res.json(result);
-      } catch (e) {
-        console.error('Invalid JSON from Python:', output);
-        res.status(500).json({ error: 'Invalid response from Python script' });
-      }
-    });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Server error' });
-  }
+app.get('/', (req, res) => {
+  res.send('AngleVision backend is running ✅');
 });
 
-// Fallback route
-app.get('/', (req, res) => {
-  res.send('AngleVision backend is running');
+app.post('/detect-angle', upload.single('image'), async (req, res) => {
+  const imagePath = req.file.path;
+
+  let points = null;
+  try {
+    if (req.body.points) {
+      points = JSON.parse(req.body.points);
+    }
+  } catch (err) {
+    console.warn('Points parse error:', err);
+  }
+
+  if (points && points.length === 4) {
+    try {
+      const angle = calculateAngleFromPoints(points);
+      const imageData = fs.readFileSync(imagePath, 'base64');
+      return res.json({
+        angle,
+        overlay: `data:image/jpeg;base64,${imageData}`,
+      });
+    } catch (err) {
+      console.error("Custom point calculation failed", err);
+      return res.status(500).json({ error: 'Manual angle calculation failed' });
+    }
+  }
+
+  // Fallback: auto-detect using Python
+  exec(`python3 utils/angle_detector.py ${imagePath}`, (error, stdout, stderr) => {
+    if (error) {
+      console.error('Python error:', stderr);
+      return res.status(500).json({ error: 'Auto angle detection failed' });
+    }
+
+    try {
+      const data = JSON.parse(stdout.trim());
+      res.json(data);
+    } catch (parseErr) {
+      console.error('Failed to parse Python output:', stdout);
+      res.status(500).json({ error: 'Invalid response from Python script' });
+    }
+  });
 });
 
 app.listen(PORT, () => {
