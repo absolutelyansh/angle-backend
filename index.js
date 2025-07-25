@@ -1,20 +1,6 @@
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
-const { spawn } = require('child_process');
-const fs = require('fs');
-const path = require('path');
-
-const app = express();
-const port = process.env.PORT || 3000;
-
-app.use(cors());
-app.use(express.json());
-
-const upload = multer({ dest: 'uploads/' });
-
 app.post('/detect-angle', upload.single('image'), (req, res) => {
   const imagePath = req.file.path;
+  const annotatedPath = 'annotated.jpg';
 
   const python = spawn('python3', ['utils/angle_detector.py', imagePath]);
 
@@ -28,20 +14,17 @@ app.post('/detect-angle', upload.single('image'), (req, res) => {
   });
 
   python.on('close', (code) => {
-    fs.unlinkSync(imagePath); // Clean up uploaded image
     const angle = parseFloat(result);
-    if (!isNaN(angle)) {
-      res.json({ angle });
+    if (!isNaN(angle) && fs.existsSync(annotatedPath)) {
+      const base64Image = fs.readFileSync(annotatedPath, { encoding: 'base64' });
+      fs.unlinkSync(imagePath);
+      fs.unlinkSync(annotatedPath);
+      return res.json({
+        angle,
+        overlay: `data:image/jpeg;base64,${base64Image}`,
+      });
     } else {
-      res.status(500).json({ error: 'Invalid response from Python script' });
+      return res.json({ error: 'Invalid response from Python script' });
     }
   });
-});
-
-app.get('/', (req, res) => {
-  res.send('AngleVision backend is running');
-});
-
-app.listen(port, () => {
-  console.log(`Server is running on port ${port}`);
 });
