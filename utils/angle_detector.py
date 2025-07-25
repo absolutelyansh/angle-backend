@@ -1,55 +1,63 @@
 import cv2
-import numpy as np
 import sys
+import numpy as np
 import math
-import os
 
-def draw_angle_overlay(image_path, output_path='annotated.jpg'):
-    img = cv2.imread(image_path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+def detect_angle(image_path):
+    image = cv2.imread(image_path)
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     edges = cv2.Canny(gray, 50, 150, apertureSize=3)
-    lines = cv2.HoughLines(edges, 1, np.pi / 180, 150)
 
+    lines = cv2.HoughLinesP(edges, 1, np.pi / 180, threshold=100,
+                            minLineLength=50, maxLineGap=10)
+    
     if lines is None or len(lines) < 2:
-        cv2.imwrite(output_path, img)
-        print("-1")
-        return
+        return None
 
-    rho1, theta1 = lines[0][0]
-    rho2, theta2 = lines[1][0]
+    line1 = lines[0][0]
+    line2 = lines[1][0]
 
-    # Convert polar to cartesian points
-    def get_line(rho, theta):
-        a = np.cos(theta)
-        b = np.sin(theta)
-        x0 = a * rho
-        y0 = b * rho
-        x1 = int(x0 + 1000 * (-b))
-        y1 = int(y0 + 1000 * a)
-        x2 = int(x0 - 1000 * (-b))
-        y2 = int(y0 - 1000 * a)
-        return (x1, y1), (x2, y2)
+    def angle_between_lines(l1, l2):
+        x1, y1, x2, y2 = l1
+        x3, y3, x4, y4 = l2
 
-    pt1_start, pt1_end = get_line(rho1, theta1)
-    pt2_start, pt2_end = get_line(rho2, theta2)
+        dx1, dy1 = x2 - x1, y2 - y1
+        dx2, dy2 = x4 - x3, y4 - y3
 
-    # Draw the two lines
-    cv2.line(img, pt1_start, pt1_end, (0, 0, 255), 2)
-    cv2.line(img, pt2_start, pt2_end, (0, 255, 0), 2)
+        angle1 = math.atan2(dy1, dx1)
+        angle2 = math.atan2(dy2, dx2)
 
-    # Compute angle
-    angle = abs(theta1 - theta2) * (180 / np.pi)
-    angle = angle if angle <= 90 else 180 - angle
-    angle = round(angle, 2)
+        result = abs(math.degrees(angle1 - angle2))
+        return result if result <= 180 else 360 - result
 
-    # Draw angle text
-    cv2.putText(img, f'{angle} deg', (30, 60),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.6, (255, 255, 255), 3)
+    angle = angle_between_lines(line1, line2)
 
-    # Save annotated image
-    cv2.imwrite(output_path, img)
-    print(angle)
+    # Draw lines
+    cv2.line(image, (line1[0], line1[1]), (line1[2], line1[3]), (0, 255, 0), 3)
+    cv2.line(image, (line2[0], line2[1]), (line2[2], line2[3]), (255, 0, 0), 3)
+
+    # Write angle on image
+    cv2.putText(image, f"{angle:.2f} deg", (50, 50),
+                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+
+    cv2.imwrite("annotated.jpg", image)
+
+    return angle
 
 if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        print("Usage: python angle_detector.py <image_path> <mode>")
+        sys.exit(1)
+
     image_path = sys.argv[1]
-    draw_angle_overlay(image_path)
+    mode = sys.argv[2]
+
+    if mode == 'angle':
+        result = detect_angle(image_path)
+        if result is not None:
+            print(result)
+        else:
+            print("0")
+    else:
+        # Placeholder for future modes like 'length', 'shape'
+        print("0")
