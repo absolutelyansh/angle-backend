@@ -35,21 +35,18 @@ app.post('/detect-angle', upload.single('image'), async (req, res) => {
     console.warn('Points parse error:', err);
   }
 
+  // ✅ Use manual points if valid
   if (points && points.length === 4) {
     try {
-      const angle = calculateAngleFromPoints(points);
-      const imageData = fs.readFileSync(imagePath, 'base64');
-      return res.json({
-        angle,
-        overlay: `data:image/jpeg;base64,${imageData}`,
-      });
+      const result = calculateAngleFromPoints(points, imagePath);
+      return res.json(result);
     } catch (err) {
-      console.error("Custom point calculation failed", err);
+      console.error("Custom point angle calc failed", err);
       return res.status(500).json({ error: 'Manual angle calculation failed' });
     }
   }
 
-  // Fallback: auto-detect using Python
+  // 🔁 Fallback: Python auto detection
   exec(`python3 utils/angle_detector.py ${imagePath}`, (error, stdout, stderr) => {
     if (error) {
       console.error('Python error:', stderr);
