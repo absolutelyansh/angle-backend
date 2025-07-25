@@ -1,62 +1,56 @@
 const express = require('express');
 const multer = require('multer');
-const cors = require('cors');
 const fs = require('fs');
-const { spawn } = require('child_process');
+const cors = require('cors');
 const path = require('path');
 
+const detectAngleAutomatically = require('./utils/angle_detector'); // OpenCV auto method
+const calculateAngleFromPoints = require('./utils/calculateAngleFromPoints'); // NEW FUNCTION
+
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Middleware
-app.use(cors());
-app.use(express.json());
-
-// Upload handler
 const upload = multer({ dest: 'uploads/' });
 
-// Default route (optional)
-app.get('/', (req, res) => {
-  res.send('AngleVision backend is running');
-});
+app.use(cors());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// POST /detect-angle
-app.post('/detect-angle', upload.single('image'), (req, res) => {
-  const imagePath = req.file.path;
-  const mode = req.body.mode || 'angle';
-  const annotatedPath = 'annotated.jpg';
+app.post('/detect-angle', upload.single('image'), async (req, res) => {
+  try {
+    const imagePath = req.file.path;
+    const pointsJson = req.body.points;
 
-  const python = spawn('python3', ['utils/angle_detector.py', imagePath, mode]);
+    // ✅ If user selected points are provided
+    if (pointsJson) {
+      const points = JSON.parse(pointsJson);
 
-  let result = '';
-  python.stdout.on('data', (data) => {
-    result += data.toString();
-  });
+      if (!Array.isArray(points) || points.length !== 4) {
+        return res.status(400).json({ error: 'Exactly 4 points are required (2 lines).' });
+      }
 
-  python.stderr.on('data', (data) => {
-    console.error(`Python error: ${data}`);
-  });
+      const angle = calculateAngleFromPoints(points);
 
-  python.on('close', (code) => {
-    const angle = parseFloat(result);
-    if (!isNaN(angle) && fs.existsSync(annotatedPath)) {
-      const base64Image = fs.readFileSync(annotatedPath, { encoding: 'base64' });
-
-      // Clean up
-      fs.unlinkSync(imagePath);
-      fs.unlinkSync(annotatedPath);
-
+      // Optionally generate overlay with user lines
       return res.json({
         angle,
-        overlay: `data:image/jpeg;base64,${base64Image}`,
+        overlay: null, // You can generate annotated image later
       });
-    } else {
-      return res.json({ error: 'Invalid response from Python script' });
     }
-  });
+
+    // ❌ No points? Run default OpenCV detection
+    const { angle, overlayPath } = await detectAngleAutomatically(imagePath);
+    const overlayBase64 = fs.readFileSync(overlayPath, { encoding: 'base64' });
+
+    return res.json({
+      angle,
+      overlay: `data:image/jpeg;base64,${overlayBase64}`,
+    });
+  } catch (err) {
+    console.error('Detection error:', err);
+    return res.status(500).json({ error: 'Internal server error during angle detection.' });
+  }
 });
 
-// Start server
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`AngleVision backend is running on port ${PORT}`);
+  console.log(`✅ Angle backend running on port ${PORT}`);
 });
