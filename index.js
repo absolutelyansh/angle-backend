@@ -2,53 +2,87 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { spawn } = require('child_process');
 const cors = require('cors');
 
 const app = express();
+const port = process.env.PORT || 10000;
+
 app.use(cors());
-app.use(express.json()); // for parsing JSON
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-const PORT = process.env.PORT || 10000;
-
-// multer setup
+// Multer setup for file uploads
 const storage = multer.diskStorage({
-  destination: './uploads/',
+  destination: (req, file, cb) => {
+    const uploadPath = 'uploads/';
+    if (!fs.existsSync(uploadPath)) {
+      fs.mkdirSync(uploadPath);
+    }
+    cb(null, uploadPath);
+  },
   filename: (req, file, cb) => {
-    cb(null, 'input.jpg');
+    cb(null, `upload_${Date.now()}${path.extname(file.originalname)}`);
   },
 });
+
 const upload = multer({ storage });
 
+// POST endpoint to receive image + points
 app.post('/detect-angle', upload.single('image'), (req, res) => {
-  const inputPath = path.join(__dirname, 'uploads', 'input.jpg');
-  const outputPath = path.join(__dirname, 'annotated.jpg');
+  const imagePath = req.file.path;
+  const points = req.body.points;
 
-  const points = req.body.points || []; // expected: [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
-  const pointStr = JSON.stringify(points);
+  if (!points) {
+    return res.status(400).json({ error: 'No points provided' });
+  }
 
-  exec(`python3 ./utils/angle_detector.py ${inputPath} '${pointStr}'`, (err, stdout, stderr) => {
-    if (err) {
-      console.error('Python error:', stderr);
-      return res.status(500).json({ error: 'Python execution failed' });
+  console.log('🟢 Received image:', imagePath);
+  console.log('🟢 Received points:', points);
+
+  const python = spawn('python3', ['utils/angle_detector.py', imagePath, points]);
+
+  let pythonOutput = '';
+  let pythonError = '';
+
+  python.stdout.on('data', (data) => {
+    pythonOutput += data.toString();
+    console.log(`📤 Python stdout: ${data}`);
+  });
+
+  python.stderr.on('data', (data) => {
+    pythonError += data.toString();
+    console.error(`❌ Python stderr: ${data}`);
+  });
+
+  python.on('close', (code) => {
+    console.log(`🔚 Python exited with code ${code}`);
+
+    if (code !== 0) {
+      return res.status(500).json({
+        error: 'Python execution failed',
+        details: pythonError || 'No error output',
+      });
     }
 
-    const angle = parseFloat(stdout.trim());
-    if (isNaN(angle)) {
-      return res.status(400).json({ error: 'Invalid angle received' });
+    const angle = pythonOutput.trim();
+    const annotatedPath = 'annotated.jpg';
+
+    if (!fs.existsSync(annotatedPath)) {
+      return res.status(500).json({ error: 'Annotated image not found' });
     }
 
-    fs.readFile(outputPath, (err, imageData) => {
-      if (err) {
-        return res.status(500).json({ error: 'Image read failed' });
-      }
+    const imageBuffer = fs.readFileSync(annotatedPath);
+    const base64Image = Buffer.from(imageBuffer).toString('base64');
 
-      const base64 = `data:image/jpeg;base64,${imageData.toString('base64')}`;
-      return res.json({ angle, overlay: base64 });
+    res.json({
+      angle: parseFloat(angle),
+      annotatedImage: base64Image,
     });
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+// Start server
+app.listen(port, () => {
+  console.log(`✅ Server running on port ${port}`);
 });
