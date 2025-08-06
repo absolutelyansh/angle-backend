@@ -1,64 +1,60 @@
 import cv2
-import sys
 import numpy as np
-import math
+import sys
+import base64
 import json
-import traceback
 
-def angle_between_lines(p1, p2, p3, p4):
-    dx1, dy1 = p2[0] - p1[0], p2[1] - p1[1]
-    dx2, dy2 = p4[0] - p3[0], p4[1] - p3[1]
-    angle1 = math.atan2(dy1, dx1)
-    angle2 = math.atan2(dy2, dx2)
-    angle = abs(math.degrees(angle1 - angle2))
-    return angle if angle <= 180 else 360 - angle
-
-def draw_lines_and_angle(image_path, points, output_path='annotated.jpg'):
-    print(f"Reading image from: {image_path}")
+def draw_lines_and_angle(image_path, points):
     image = cv2.imread(image_path)
     if image is None:
-        raise ValueError("Image could not be read. Check the image path.")
+        raise ValueError("Failed to read image from path")
 
-    p1, p2, p3, p4 = points
+    points = [(int(p[0]), int(p[1])) for p in points]
 
-    # Draw lines
-    cv2.line(image, p1, p2, (0, 255, 0), 3)
-    cv2.line(image, p3, p4, (255, 0, 0), 3)
+    # Draw lines between points (1-2 and 3-4)
+    cv2.line(image, points[0], points[1], (0, 255, 0), 3)
+    cv2.line(image, points[2], points[3], (0, 0, 255), 3)
 
-    angle = angle_between_lines(p1, p2, p3, p4)
+    # Calculate angle
+    def vector(p1, p2):
+        return [p2[0] - p1[0], p2[1] - p1[1]]
 
-    # Draw angle text
-    cv2.putText(image, f"{angle:.2f}°", (50, 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+    v1 = vector(points[0], points[1])
+    v2 = vector(points[2], points[3])
 
-    cv2.imwrite(output_path, image)
-    return angle
+    def angle_between(v1, v2):
+        dot = np.dot(v1, v2)
+        norm_product = np.linalg.norm(v1) * np.linalg.norm(v2)
+        cos_theta = dot / norm_product
+        angle_rad = np.arccos(np.clip(cos_theta, -1.0, 1.0))
+        return np.degrees(angle_rad)
+
+    angle = angle_between(v1, v2)
+
+    # Encode image
+    _, buffer = cv2.imencode('.jpg', image)
+    base64_image = base64.b64encode(buffer).decode('utf-8')
+
+    # Output only final JSON
+    result = {
+        "angle": angle,
+        "annotatedImage": base64_image
+    }
+
+    print(json.dumps(result))  
+    sys.stdout.flush()
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python angle_detector.py <image_path> <json_points>")
-        sys.exit(1)
-
-    image_path = sys.argv[1]
-    json_points = sys.argv[2]
-
     try:
-        print("✅ Python script started")
-        print(f"image_path: {image_path}")
-        print(f"raw json points: {json_points}")
+        if len(sys.argv) != 3:
+            raise ValueError("Usage: angle_detector.py <image_path> <points_json>")
 
-        points = json.loads(json_points)
-        if len(points) != 4:
-            raise ValueError("Exactly 4 points required")
+        image_path = sys.argv[1]
+        raw_points = json.loads(sys.argv[2])
 
-        # Convert to integer coordinate tuples
-        points = [tuple(map(int, pt)) for pt in points]
-        print(f"Converted points: {points}")
-
-        angle = draw_lines_and_angle(image_path, points)
-        print(angle if angle is not None else "0")
+        draw_lines_and_angle(image_path, raw_points)
 
     except Exception as e:
-        print("Python error:", str(e))
-        traceback.print_exc()
+        # Print all errors to stderr so backend can handle cleanly
+        print(f"❌ Python error: {str(e)}", file=sys.stderr)
         sys.exit(1)
