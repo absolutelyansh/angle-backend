@@ -12,7 +12,7 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Multer setup
+// 🔧 Multer setup
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     const uploadPath = 'uploads/';
@@ -27,6 +27,9 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
+/* ---------------------------------------------
+   🎯 ANGLE DETECTION ENDPOINT
+--------------------------------------------- */
 app.post('/detect-angle', upload.single('image'), async (req, res) => {
   try {
     const imagePath = req.file.path;
@@ -84,6 +87,59 @@ app.post('/detect-angle', upload.single('image'), async (req, res) => {
   }
 });
 
+/* ---------------------------------------------
+   🧠 DEPTH ESTIMATION ENDPOINT
+--------------------------------------------- */
+app.post('/depth-map', upload.single('image'), async (req, res) => {
+  try {
+    const imagePath = req.file.path;
+    console.log('📷 Depth Estimation: Image received:', imagePath);
+
+    const py = spawn('python3', ['utils/depth_estimator.py', imagePath]);
+
+    let output = '';
+    let errorOutput = '';
+
+    py.stdout.on('data', (data) => {
+      output += data.toString();
+      console.log(`📤 Depth stdout: ${data}`);
+    });
+
+    py.stderr.on('data', (data) => {
+      errorOutput += data.toString();
+      console.error(`❌ Depth stderr: ${data}`);
+    });
+
+    py.on('close', (code) => {
+      console.log(`🔚 Depth script exited with code ${code}`);
+
+      if (code !== 0) {
+        return res.status(500).json({
+          error: 'Depth estimation failed',
+          details: errorOutput || 'Unknown error',
+        });
+      }
+
+      const depthPath = 'depth.jpg';
+      if (!fs.existsSync(depthPath)) {
+        return res.status(500).json({ error: 'Depth image not found' });
+      }
+
+      const buffer = fs.readFileSync(depthPath);
+      const base64 = Buffer.from(buffer).toString('base64');
+
+      res.json({
+        depthImage: base64,
+      });
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+/* ---------------------------------------------
+   ✅ START SERVER
+--------------------------------------------- */
 app.listen(port, () => {
   console.log(`✅ Server running on port ${port}`);
 });
